@@ -12,7 +12,11 @@ type ToolInfo = { id: string; label: string; description: string; state: string 
 type ActivityItem = { id: string; kind: string; title: string; details: string; model: string | null; inputTokens: number; outputTokens: number; costMicros: number; createdAt: string };
 type TrustScan = { id: string; agentId: string; status: string; score: number | null; report: { summary?: string; findings?: Array<{ label: string; score?: number | null; status?: string }>; roi?: Array<{ analysisType: string; estimatedSavingsUsd: number }> } | null; error: string | null; createdAt: string };
 type AgentData = { agents: Agent[]; monthlySpendMicros: number; trustScore: number | null; trustScan: TrustScan | null; openAIConfigured: boolean; vectorStoreConfigured: boolean; availableTools: string[]; tools: ToolInfo[] };
-type SwitchTrustConnection = { connected: boolean; instanceUrl: string | null; updatedAt: string | null };
+type SwitchTrustConnection = {
+  connected: boolean; instanceUrl: string | null; updatedAt: string | null;
+  agentEndpoints?: Array<{ id: string; slug: string; name: string; url: string }>;
+  agentTokenConfigured?: boolean;
+};
 
 const agentIcons = { analyst: Search, developer: Code2, reviewer: ShieldCheck, tester: FlaskConical };
 const modelOptions = [
@@ -110,16 +114,16 @@ export function AgentCenter({ workspaceId, repository }: { workspaceId: string; 
 
   const loadTrustConnection = useCallback(async () => {
     try {
-      const response = await fetch("/api/integrations/switch-trust", { cache: "no-store" });
+      const response = await fetch(`/api/integrations/switch-trust?workspaceId=${encodeURIComponent(workspaceId)}`, { cache: "no-store" });
       const result = await readApiResponse<SwitchTrustConnection>(response, "Could not load Switch Trust connection status.");
       if (response.ok) {
         setTrustConnection(result);
         if (result.instanceUrl) setTrustInstanceUrl(result.instanceUrl);
       }
     } catch { /* The agent page remains usable while integration status is unavailable. */ }
-  }, []);
+  }, [workspaceId]);
 
-  useEffect(() => { loadTrustConnection(); }, [loadTrustConnection]);
+  useEffect(() => { if (!loading) void loadTrustConnection(); }, [loadTrustConnection, loading]);
 
   async function saveSwitchTrustConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -132,6 +136,7 @@ export function AgentCenter({ workspaceId, repository }: { workspaceId: string; 
       const result = await readApiResponse<{ instanceUrl: string; initialScan: { id: string } | null; scanError?: string | null }>(response, "Could not save the Switch Trust key.");
       setTrustApiKey("");
       setTrustConnection({ connected: true, instanceUrl: result.instanceUrl, updatedAt: new Date().toISOString() });
+      void loadTrustConnection();
       setTrustMessage(result.initialScan ? "API key saved securely. Your first Switch Trust evaluation is queued." : "API key saved securely for your account.");
       if (result.scanError) setTrustError(result.scanError);
       if (result.initialScan?.id) {
@@ -222,6 +227,7 @@ export function AgentCenter({ workspaceId, repository }: { workspaceId: string; 
     <section className={`switch-trust-connect-panel ${trustConnection.connected ? "is-connected" : ""}`} aria-labelledby="switch-trust-connect-title">
       <div className="switch-trust-connect-heading"><span className="switch-trust-connect-icon"><KeyRound size={17} /></span><div><span className="summary-label">TRUST &amp; ROI INTEGRATION</span><h2 id="switch-trust-connect-title">Connect Switch Trust</h2><p>{trustConnection.connected ? "Your Switch Trust API key is saved securely to your account." : "Add your personal Switch Trust API key to enable trust and ROI data."}</p></div><span className={`switch-trust-state ${trustConnection.connected ? "connected" : "not-connected"}`}><i />{trustConnection.connected ? "Key saved" : "Not connected"}</span></div>
       {trustConnection.connected ? <div className="switch-trust-connected-row"><span><Link2 size={13} />{trustConnection.instanceUrl}</span><button type="button" onClick={removeSwitchTrustConnection} disabled={trustSaving}>{trustSaving ? <LoaderCircle className="loading-icon" size={13} /> : <X size={13} />} Disconnect</button></div> : <form className="switch-trust-connect-form" onSubmit={saveSwitchTrustConnection}><label>Switch Trust API key<input type="password" value={trustApiKey} onChange={(event) => setTrustApiKey(event.target.value)} autoComplete="new-password" placeholder="Paste your Switch Trust API key" minLength={12} maxLength={512} required /></label><label>Instance URL<input type="url" value={trustInstanceUrl} onChange={(event) => setTrustInstanceUrl(event.target.value)} placeholder="https://app.switchagents.ai" required /></label><button type="submit" className="switch-trust-save-button" disabled={trustSaving || !trustApiKey.trim()}>{trustSaving ? <LoaderCircle className="loading-icon" size={14} /> : <Link2 size={14} />}{trustSaving ? "Saving securely…" : "Connect Switch Trust"}</button></form>}
+      {trustConnection.connected && <div className="switch-trust-endpoints"><strong>DevCrew agent endpoints</strong><p>{trustConnection.agentTokenConfigured ? <>The server token is configured. Register these URLs in Switch Trust and set its authorization to <code>Bearer</code> using the same token.</> : <>Add <code>SWITCH_TRUST_AGENT_TOKEN</code> to the server environment before registering these URLs. Use its value as the Bearer token in Switch Trust; the token is never shown here.</>}</p>{trustConnection.agentEndpoints?.map((endpoint) => <div className="switch-trust-endpoint" key={endpoint.id}><span>{endpoint.name}</span><code>{endpoint.url}</code><button type="button" onClick={() => { void navigator.clipboard.writeText(endpoint.url); }}>Copy URL</button></div>)}</div>}
       {trustError && <p className="switch-trust-form-error" role="alert">{trustError}</p>}{trustMessage && <p className="switch-trust-form-success" role="status">{trustMessage}</p>}
       <small className="switch-trust-key-note">Your key is encrypted before it is stored and is never shown again. Use an Editor-scoped key to read ROI data and manage evaluations.</small>
     </section>

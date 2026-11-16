@@ -12,12 +12,23 @@ async function signedInUser() {
   return session?.user ?? null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await signedInUser();
   if (!user) return NextResponse.json({ error: "Sign in to manage integrations." }, { status: 401 });
   const [connection] = await db.select({ instanceUrl: switchTrustConnections.instanceUrl, updatedAt: switchTrustConnections.updatedAt })
     .from(switchTrustConnections).where(eq(switchTrustConnections.userId, user.id)).limit(1);
-  return NextResponse.json({ connected: Boolean(connection), instanceUrl: connection?.instanceUrl ?? null, updatedAt: connection?.updatedAt ?? null });
+  const requestedWorkspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
+  const [workspace] = await db.select({ id: workspaces.id }).from(workspaces)
+    .where(requestedWorkspaceId ? and(eq(workspaces.id, requestedWorkspaceId), eq(workspaces.userId, user.id)) : eq(workspaces.userId, user.id))
+    .orderBy(asc(workspaces.createdAt)).limit(1);
+  const agents = workspace ? await db.select({ id: workspaceAgents.id, name: workspaceAgents.name, slug: workspaceAgents.slug })
+    .from(workspaceAgents).where(eq(workspaceAgents.workspaceId, workspace.id)).orderBy(asc(workspaceAgents.createdAt)) : [];
+  const origin = (process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin).trim().replace(/\/$/, "");
+  return NextResponse.json({
+    connected: Boolean(connection), instanceUrl: connection?.instanceUrl ?? null, updatedAt: connection?.updatedAt ?? null,
+    agentEndpoints: agents.map((agent) => ({ ...agent, url: `${origin}/api/integrations/switch-trust/agents/${encodeURIComponent(agent.id)}/chat/completions` })),
+    agentTokenConfigured: Boolean(process.env.SWITCH_TRUST_AGENT_TOKEN),
+  });
 }
 
 export async function POST(request: Request) {
